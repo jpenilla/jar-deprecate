@@ -30,7 +30,8 @@ dependencies {
 tasks {
   jar {
     manifest.attributes(
-      "Main-Class" to "xyz.jpenilla.deprecator.Deprecator"
+      "Main-Class" to "xyz.jpenilla.deprecator.Deprecator",
+      "Multi-Release" to true,
     )
   }
   assemble {
