@@ -6,6 +6,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Iterator;
 import java.util.List;
+import java.util.StringJoiner;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
@@ -23,7 +24,9 @@ public final class Deprecator {
     final List<String> argList = new ArrayList<>(Arrays.asList(args));
     final List<IOPaths> inputs = new ArrayList<>();
 
+    String deprecationMessage0 = "Deprecated API.";
     int parallelism = 4;
+
     final Iterator<String> argIterator = argList.iterator();
     while (argIterator.hasNext()) {
       final String next = argIterator.next();
@@ -39,6 +42,13 @@ public final class Deprecator {
           throw new IllegalArgumentException("Invalid format for --parallelism argument '" + value + "'", ex);
         }
         continue;
+      } else if (next.equals("--message")) {
+        final StringJoiner joiner = new StringJoiner(" ");
+        while (argIterator.hasNext()) {
+          joiner.add(argIterator.next());
+        }
+        deprecationMessage0 = joiner.toString();
+        break;
       }
 
       if (!argIterator.hasNext()) {
@@ -48,10 +58,11 @@ public final class Deprecator {
       inputs.add(new IOPaths(java.nio.file.Paths.get(next), java.nio.file.Paths.get(out)));
     }
 
+    final String deprecationMessage = deprecationMessage0;
     final ExecutorService taskExecutor = Executors.newFixedThreadPool(parallelism, new NamedThreadFactory("task-executor"));
 
     final List<ProcessingTask> futures = inputs.stream()
-      .map(path -> scheduleProcessing(taskExecutor, path))
+      .map(path -> scheduleProcessing(taskExecutor, path, deprecationMessage))
       .toList();
 
     for (final ProcessingTask task : futures) {
@@ -65,9 +76,9 @@ public final class Deprecator {
     Util.shutdownExecutor(taskExecutor, TimeUnit.SECONDS, 3);
   }
 
-  private static void processSourcesJar(final IOPaths paths) {
+  private static void processSourcesJar(final IOPaths paths, final String deprecationMessage) {
     try {
-      SourcesProcessing.process(paths.input(), paths.output());
+      SourcesProcessing.process(paths.input(), paths.output(), deprecationMessage);
     } catch (final IOException e) {
       Util.rethrow(e);
     }
@@ -77,12 +88,12 @@ public final class Deprecator {
     JarProcessing.process(paths.input(), paths.output());
   }
 
-  private static ProcessingTask scheduleProcessing(final Executor executor, final IOPaths paths) {
+  private static ProcessingTask scheduleProcessing(final Executor executor, final IOPaths paths, final String deprecationMessage) {
     final CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
       final long start = System.currentTimeMillis();
       if (paths.input().getFileName().toString().endsWith("-sources.jar")) {
         LOGGER.info("Processing {} as sources jar...", paths.input());
-        processSourcesJar(paths);
+        processSourcesJar(paths, deprecationMessage);
       } else {
         LOGGER.info("Processing {}...", paths.input());
         processJar(paths);

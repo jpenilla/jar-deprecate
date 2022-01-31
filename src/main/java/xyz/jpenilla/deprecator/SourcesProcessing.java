@@ -15,11 +15,20 @@ import org.checkerframework.checker.nullness.qual.NonNull;
 import org.checkerframework.framework.qual.DefaultQualifier;
 import org.eclipse.jdt.core.JavaCore;
 import org.eclipse.jdt.core.dom.AST;
+import org.eclipse.jdt.core.dom.ASTNode;
 import org.eclipse.jdt.core.dom.ASTVisitor;
 import org.eclipse.jdt.core.dom.Annotation;
+import org.eclipse.jdt.core.dom.AnnotationTypeDeclaration;
+import org.eclipse.jdt.core.dom.BodyDeclaration;
+import org.eclipse.jdt.core.dom.EnumConstantDeclaration;
+import org.eclipse.jdt.core.dom.EnumDeclaration;
 import org.eclipse.jdt.core.dom.FieldDeclaration;
+import org.eclipse.jdt.core.dom.Javadoc;
 import org.eclipse.jdt.core.dom.MarkerAnnotation;
 import org.eclipse.jdt.core.dom.MethodDeclaration;
+import org.eclipse.jdt.core.dom.RecordDeclaration;
+import org.eclipse.jdt.core.dom.TagElement;
+import org.eclipse.jdt.core.dom.TextElement;
 import org.eclipse.jdt.core.dom.TypeDeclaration;
 
 @DefaultQualifier(NonNull.class)
@@ -27,7 +36,7 @@ public final class SourcesProcessing {
   private SourcesProcessing() {
   }
 
-  public static void process(final Path input, final Path output) throws IOException {
+  public static void process(final Path input, final Path output, final String deprecationMessage) throws IOException {
     final Path extracted = input.resolveSibling(input.getFileName() + ".dir");
     final Path out = output.resolveSibling(output.getFileName() + ".dir");
     Util.deleteRecursively(extracted);
@@ -42,7 +51,7 @@ public final class SourcesProcessing {
     final Mercury mercury = new Mercury();
     mercury.setGracefulClasspathChecks(true);
     mercury.setSourceCompatibility(JavaCore.VERSION_16);
-    mercury.getProcessors().add(new DeprecatingProcessor());
+    mercury.getProcessors().add(new DeprecatingProcessor(deprecationMessage));
     try {
       mercury.rewrite(extracted, out);
     } catch (final Exception e) {
@@ -60,18 +69,71 @@ public final class SourcesProcessing {
     Util.deleteRecursively(out);
   }
 
-  private static final class DeprecatingProcessor implements SourceRewriter {
+  private record DeprecatingProcessor(String deprecationMessage) implements SourceRewriter {
     @Override
     public void rewrite(final RewriteContext context) {
-      context.getCompilationUnit().accept(new DeprecatingVisitor(context));
+      context.getCompilationUnit().accept(new DeprecatingVisitor(context, this.deprecationMessage));
     }
   }
 
   private static final class DeprecatingVisitor extends ASTVisitor {
     private final RewriteContext context;
+    private final String deprecationMessage;
 
-    public DeprecatingVisitor(final RewriteContext context) {
+    public DeprecatingVisitor(final RewriteContext context, final String deprecationMessage) {
       this.context = context;
+      this.deprecationMessage = deprecationMessage;
+    }
+
+    @Override
+    public boolean visit(final EnumDeclaration node) {
+      if (deprecated(node.modifiers())) {
+        return true;
+      }
+
+      final Javadoc javadoc = javadoc(node);
+      this.context.createASTRewrite()
+        .set(node, EnumDeclaration.JAVADOC_PROPERTY, javadoc, null);
+
+      this.context.createASTRewrite()
+        .getListRewrite(node, EnumDeclaration.MODIFIERS2_PROPERTY)
+        .insertFirst(deprecated(node.getAST()), null);
+
+      return true;
+    }
+
+    @Override
+    public boolean visit(final RecordDeclaration node) {
+      if (deprecated(node.modifiers())) {
+        return true;
+      }
+
+      final Javadoc javadoc = javadoc(node);
+      this.context.createASTRewrite()
+        .set(node, RecordDeclaration.JAVADOC_PROPERTY, javadoc, null);
+
+      this.context.createASTRewrite()
+        .getListRewrite(node, RecordDeclaration.MODIFIERS2_PROPERTY)
+        .insertFirst(deprecated(node.getAST()), null);
+
+      return true;
+    }
+
+    @Override
+    public boolean visit(final AnnotationTypeDeclaration node) {
+      if (deprecated(node.modifiers())) {
+        return true;
+      }
+
+      final Javadoc javadoc = javadoc(node);
+      this.context.createASTRewrite()
+        .set(node, AnnotationTypeDeclaration.JAVADOC_PROPERTY, javadoc, null);
+
+      this.context.createASTRewrite()
+        .getListRewrite(node, AnnotationTypeDeclaration.MODIFIERS2_PROPERTY)
+        .insertFirst(deprecated(node.getAST()), null);
+
+      return true;
     }
 
     @Override
@@ -80,9 +142,14 @@ public final class SourcesProcessing {
         return true;
       }
 
+      final Javadoc javadoc = javadoc(node);
+      this.context.createASTRewrite()
+        .set(node, TypeDeclaration.JAVADOC_PROPERTY, javadoc, null);
+
       this.context.createASTRewrite()
         .getListRewrite(node, TypeDeclaration.MODIFIERS2_PROPERTY)
         .insertFirst(deprecated(node.getAST()), null);
+
       return true;
     }
 
@@ -92,9 +159,31 @@ public final class SourcesProcessing {
         return false;
       }
 
+      final Javadoc javadoc = javadoc(node);
+      this.context.createASTRewrite()
+        .set(node, MethodDeclaration.JAVADOC_PROPERTY, javadoc, null);
+
       this.context.createASTRewrite()
         .getListRewrite(node, MethodDeclaration.MODIFIERS2_PROPERTY)
         .insertFirst(deprecated(node.getAST()), null);
+
+      return false;
+    }
+
+    @Override
+    public boolean visit(final EnumConstantDeclaration node) {
+      if (deprecated(node.modifiers())) {
+        return false;
+      }
+
+      final Javadoc javadoc = javadoc(node);
+      this.context.createASTRewrite()
+        .set(node, EnumConstantDeclaration.JAVADOC_PROPERTY, javadoc, null);
+
+      this.context.createASTRewrite()
+        .getListRewrite(node, EnumConstantDeclaration.MODIFIERS2_PROPERTY)
+        .insertFirst(deprecated(node.getAST()), null);
+
       return false;
     }
 
@@ -104,10 +193,30 @@ public final class SourcesProcessing {
         return false;
       }
 
+      final Javadoc javadoc = javadoc(node);
+      this.context.createASTRewrite()
+        .set(node, FieldDeclaration.JAVADOC_PROPERTY, javadoc, null);
+
       this.context.createASTRewrite()
         .getListRewrite(node, FieldDeclaration.MODIFIERS2_PROPERTY)
         .insertFirst(deprecated(node.getAST()), null);
+
       return false;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Javadoc javadoc(final BodyDeclaration node) {
+      final Javadoc javadoc = (Javadoc) node.getAST().createInstance(Javadoc.class);
+      if (node.getJavadoc() != null) {
+        javadoc.tags().addAll((List<TagElement>) ASTNode.copySubtrees(node.getAST(), node.getJavadoc().tags()));
+      }
+      final TagElement tag = node.getAST().newTagElement();
+      tag.setTagName(TagElement.TAG_DEPRECATED);
+      final TextElement text = node.getAST().newTextElement();
+      text.setText(this.deprecationMessage);
+      tag.fragments().add(text);
+      javadoc.tags().add(tag);
+      return javadoc;
     }
 
     private static boolean deprecated(final List<?> modifiers) {
