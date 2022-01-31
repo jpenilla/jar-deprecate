@@ -2,8 +2,9 @@ package xyz.jpenilla.deprecator;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.nio.file.Paths;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Iterator;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -19,30 +20,37 @@ public final class Deprecator {
   private static final Logger LOGGER = LogManager.getLogger();
 
   public static void main(final String[] args) {
-    final List<String> argList = new ArrayList<>();
+    final List<String> argList = new ArrayList<>(Arrays.asList(args));
+    final List<IOPaths> inputs = new ArrayList<>();
 
     int parallelism = 4;
-    for (int i = 0; i < args.length; i++) {
-      final String arg = args[i];
+    final Iterator<String> argIterator = argList.iterator();
+    while (argIterator.hasNext()) {
+      final String next = argIterator.next();
 
-      if (arg.equals("--parallelism")) {
-        i++;
-        final String value = args[i];
+      if (next.equals("--parallelism")) {
+        if (!argIterator.hasNext()) {
+          throw new IllegalArgumentException("Missing argument for --parallelism");
+        }
+        final String value = argIterator.next();
         try {
           parallelism = Integer.parseInt(value);
         } catch (final NumberFormatException ex) {
-          throw new RuntimeException("Invalid input for argument parallelism '" + value + "'", ex);
+          throw new IllegalArgumentException("Invalid format for --parallelism argument '" + value + "'", ex);
         }
         continue;
       }
 
-      argList.add(arg);
+      if (!argIterator.hasNext()) {
+        throw new IllegalArgumentException("Missing output directory for " + next);
+      }
+      final String out = argIterator.next();
+      inputs.add(new IOPaths(java.nio.file.Paths.get(next), java.nio.file.Paths.get(out)));
     }
 
     final ExecutorService taskExecutor = Executors.newFixedThreadPool(parallelism, new NamedThreadFactory("task-executor"));
 
-    final List<ProcessingTask> futures = argList.stream()
-      .map(Paths::get)
+    final List<ProcessingTask> futures = inputs.stream()
       .map(path -> scheduleProcessing(taskExecutor, path))
       .toList();
 
@@ -50,46 +58,43 @@ public final class Deprecator {
       try {
         task.future().join();
       } catch (final Exception ex) {
-        LOGGER.error("Failed to process jar {}", task.path(), ex);
+        LOGGER.error("Failed to process {}", task.paths().input(), ex);
       }
     }
 
     Util.shutdownExecutor(taskExecutor, TimeUnit.SECONDS, 3);
   }
 
-  private static Path output(final Path path) {
-    return path.resolveSibling(path.getFileName().toString().replace(".jar", "") + "-deprecated.jar");
-  }
-
-  private static void processSourcesJar(final Path path) {
-    final Path output = output(path);
+  private static void processSourcesJar(final IOPaths paths) {
     try {
-      SourcesProcessing.process(path, output);
+      SourcesProcessing.process(paths.input(), paths.output());
     } catch (final IOException e) {
       Util.rethrow(e);
     }
   }
 
-  private static void processJar(Path path) {
-    final Path output = output(path);
-    JarProcessing.process(path, output);
+  private static void processJar(final IOPaths paths) {
+    JarProcessing.process(paths.input(), paths.output());
   }
 
-  private static ProcessingTask scheduleProcessing(final Executor executor, final Path path) {
+  private static ProcessingTask scheduleProcessing(final Executor executor, final IOPaths paths) {
     final CompletableFuture<Void> future = CompletableFuture.runAsync(() -> {
       final long start = System.currentTimeMillis();
-      if (path.getFileName().toString().endsWith("-sources.jar")) {
-        LOGGER.info("Processing {} as sources jar...", path);
-        processSourcesJar(path);
+      if (paths.input().getFileName().toString().endsWith("-sources.jar")) {
+        LOGGER.info("Processing {} as sources jar...", paths.input());
+        processSourcesJar(paths);
       } else {
-        LOGGER.info("Processing {}...", path);
-        processJar(path);
+        LOGGER.info("Processing {}...", paths.input());
+        processJar(paths);
       }
-      LOGGER.info("Successfully processed {} in {}ms", path, System.currentTimeMillis() - start);
+      LOGGER.info("Successfully processed {} in {}ms. Saved to {}", paths.input(), System.currentTimeMillis() - start, paths.output());
     }, executor);
-    return new ProcessingTask(path, future);
+    return new ProcessingTask(paths, future);
   }
 
-  private record ProcessingTask(Path path, CompletableFuture<Void> future) {
+  private record IOPaths(Path input, Path output) {
+  }
+
+  private record ProcessingTask(IOPaths paths, CompletableFuture<Void> future) {
   }
 }
