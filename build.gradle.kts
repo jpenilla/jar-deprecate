@@ -1,7 +1,11 @@
 plugins {
   id("com.github.johnrengelman.shadow") version "7.1.2"
-  id("net.kyori.indra") version "2.0.6"
+  id("net.kyori.indra") version "2.1.1"
+  id("net.kyori.indra.publishing") version "2.1.1"
 }
+
+group = "xyz.jpenilla"
+version = "0.1.0-SNAPSHOT"
 
 indra {
   javaVersions().target(17)
@@ -20,7 +24,7 @@ dependencies {
 
   implementation("org.cadixdev:mercury:0.1.1-paperweight-SNAPSHOT")
 
-  implementation("org.checkerframework:checker-qual:3.21.1")
+  implementation("org.checkerframework:checker-qual:3.21.3")
 
   implementation(platform("org.apache.logging.log4j:log4j-bom:2.17.1"))
   implementation("org.apache.logging.log4j:log4j-api")

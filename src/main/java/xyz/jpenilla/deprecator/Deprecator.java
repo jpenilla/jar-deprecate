@@ -24,7 +24,7 @@ public final class Deprecator {
     final List<String> argList = new ArrayList<>(Arrays.asList(args));
     final List<IOPaths> inputs = new ArrayList<>();
 
-    String deprecationMessage0 = "Deprecated API.";
+    String deprecationMessage = "Deprecated API.";
     int parallelism = 4;
 
     final Iterator<String> argIterator = argList.iterator();
@@ -47,7 +47,7 @@ public final class Deprecator {
         while (argIterator.hasNext()) {
           joiner.add(argIterator.next());
         }
-        deprecationMessage0 = joiner.toString();
+        deprecationMessage = joiner.toString();
         break;
       }
 
@@ -58,10 +58,13 @@ public final class Deprecator {
       inputs.add(new IOPaths(java.nio.file.Paths.get(next), java.nio.file.Paths.get(out)));
     }
 
-    final String deprecationMessage = deprecationMessage0;
+    deprecate(parallelism, deprecationMessage, inputs);
+  }
+
+  public static void deprecate(final int parallelism, final String deprecationMessage, final List<IOPaths> ioPaths) {
     final ExecutorService taskExecutor = Executors.newFixedThreadPool(parallelism, new NamedThreadFactory("task-executor"));
 
-    final List<ProcessingTask> futures = inputs.stream()
+    final List<ProcessingTask> futures = ioPaths.stream()
       .map(path -> scheduleProcessing(taskExecutor, path, deprecationMessage))
       .toList();
 
